@@ -4,8 +4,13 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+ARG DOCKER_CLI_VERSION=27.3.1
+ARG TARGETARCH
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates build-essential docker.io && rm -rf /var/lib/apt/lists/*
+    curl ca-certificates build-essential tar && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://download.docker.com/linux/static/stable/${TARGETARCH}/docker-${DOCKER_CLI_VERSION}.tgz \
+    | tar xz -C /usr/local/bin --strip-components=1 docker/docker
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./

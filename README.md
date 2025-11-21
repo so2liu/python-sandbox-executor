@@ -56,11 +56,11 @@ uv run python worker.py
 
 ## Docker / Compose
 
-Build:
+Build (multi-arch enabled in CI; locally you can):
 ```bash
-docker build -t job-runner:latest .
+docker buildx build --platform linux/amd64,linux/arm64 -t job-runner:latest .
 # Build executor image for jobs (contains pandas)
-docker build -f Dockerfile.exec -t job-runner-exec:py3.12 .
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.exec -t job-runner-exec:py3.12 .
 ```
 
 Compose (Redis + API + worker + optional MinIO):
@@ -78,6 +78,7 @@ The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_
 - Workflow `.github/workflows/ci.yml`:
   - Runs `ruff check` and `pytest` (with fake Redis and inline worker).
   - Builds and pushes images to GHCR on `main` (`ghcr.io/<owner>/python-sandbox-executor:latest` and `...-exec:py3.12`).
+  - Multi-arch (amd64, arm64) via buildx + QEMU.
 
 To test a published image locally (replace `<owner>`):
 ```bash
