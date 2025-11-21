@@ -1,6 +1,6 @@
 # Job Runner (FastAPI + SSE)
 
-Python 3.12 job runner that accepts user code/files, executes them in a background worker, streams stdout/stderr via Server-Sent Events (SSE), and exposes a one-shot full-log endpoint. Uses `uv` for dependency management, Redis for queue/state/logs, and Pydantic for all schemas.
+Python 3.12 job runner that accepts user code/files, executes them in an isolated worker container, streams stdout/stderr via Server-Sent Events (SSE), and exposes a one-shot full-log endpoint. Uses `uv` for dependency management, Redis for queue/state/logs, and Pydantic for all schemas.
 
 ## Run
 
@@ -13,6 +13,8 @@ Environment:
 - `JOB_DATA_DIR` (optional) – where job folders are created (`data/jobs` by default).
 - `REDIS_URL` – Redis connection string (default `redis://localhost:6379/0`).
 - `INLINE_WORKER` – run the worker inside the API process (default `1` for dev/tests). Set to `0` when running a separate worker.
+- `USE_DOCKER` – run user code inside a sandboxed container (default `1`). Set to `0` for local/dev where Docker is unavailable.
+- `JOB_RUN_IMAGE` – the sandbox image for jobs (default `job-runner-exec:py3.12`).
 
 ## API (SSE only, no WebSocket)
 - `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads.
@@ -57,6 +59,8 @@ uv run python worker.py
 Build:
 ```bash
 docker build -t job-runner:latest .
+# Build executor image for jobs (contains pandas)
+docker build -f Dockerfile.exec -t job-runner-exec:py3.12 .
 ```
 
 Compose (Redis + API + worker + optional MinIO):
@@ -64,6 +68,7 @@ Compose (Redis + API + worker + optional MinIO):
 docker-compose up --build
 ```
 API will listen on `localhost:8000`, Redis on `6379`. Data is persisted under `./data`.
+The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_IMAGE`.
 
 ## Tests
 

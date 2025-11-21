@@ -99,16 +99,41 @@ class JobRunner:
         env = os.environ.copy()
         env.update(spec.env)
         env.setdefault("JOB_ID", job_id)
-        env.setdefault("JOB_INPUT_DIR", str(paths.input))
-        env.setdefault("JOB_OUTPUT_DIR", str(paths.artifacts))
-        cmd = [self.python_bin, entry_path.name, *spec.args]
+        env.setdefault(
+            "JOB_INPUT_DIR",
+            "/workspace/input"
+            if self.settings.use_docker and not self.settings.inline_worker
+            else str(paths.input),
+        )
+        env.setdefault(
+            "JOB_OUTPUT_DIR",
+            "/workspace/output"
+            if self.settings.use_docker and not self.settings.inline_worker
+            else str(paths.artifacts),
+        )
+        if self.settings.use_docker and not self.settings.inline_worker:
+            cmd = self._docker_cmd(job_id, paths, spec, env)
+            cwd = None
+        else:
+            cmd = [self.python_bin, entry_path.name, *spec.args]
+            cwd = str(paths.code)
+
+        if not cmd:
+            await self.log_store.append(
+                job_id, f"[runner] entry file not found: {entry_path}\n"
+            )
+            await self.job_store.mark_finished(
+                job_id, status=JobStatus.failed, exit_code=127, error="missing entry"
+            )
+            await self.log_store.mark_complete(job_id)
+            return
 
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=str(paths.code),
+                cwd=cwd,
                 env=env,
             )
         except FileNotFoundError as exc:
@@ -176,3 +201,43 @@ class JobRunner:
         if not path.exists():
             return []
         return sorted(p.name for p in path.iterdir() if p.is_file())
+
+    def _docker_cmd(self, job_id, paths, spec, env) -> list[str]:
+        entry_path = (paths.code / spec.entry).resolve()
+        if not entry_path.exists():
+            return []
+        network_mode = "none" if spec.net_policy == "none" else "bridge"
+        cmd = [
+            self.settings.docker_bin,
+            "run",
+            "--rm",
+            "--name",
+            f"job-{job_id[:12]}",
+            "--network",
+            network_mode,
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,size=64m",
+            "--pids-limit",
+            str(spec.pids_limit),
+            "--memory",
+            f"{spec.mem_limit_mb}m",
+            "--cpus",
+            str(spec.cpu_limit),
+            "--ulimit",
+            "nofile=1024:1024",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop=ALL",
+            "-v",
+            f"{paths.code}:/workspace/code:ro",
+            "-v",
+            f"{paths.input}:/workspace/input:ro",
+            "-v",
+            f"{paths.artifacts}:/workspace/output:rw",
+            "-w",
+            "/workspace/code",
+        ]
+        for key, value in env.items():
+            cmd.extend(["-e", f"{key}={value}"])
+        return cmd + [self.settings.docker_image, "python", spec.entry, *spec.args]

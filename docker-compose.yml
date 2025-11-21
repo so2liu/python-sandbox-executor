@@ -13,6 +13,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       JOB_DATA_DIR: /data/jobs
       INLINE_WORKER: "0"
+      USE_DOCKER: "1"
+      JOB_RUN_IMAGE: job-runner-exec:py3.12
     volumes:
       - ./data/jobs:/data/jobs
     ports:
@@ -27,8 +29,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       JOB_DATA_DIR: /data/jobs
       INLINE_WORKER: "0"
+      USE_DOCKER: "1"
+      JOB_RUN_IMAGE: job-runner-exec:py3.12
     volumes:
       - ./data/jobs:/data/jobs
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - redis
 

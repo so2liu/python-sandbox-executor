@@ -23,6 +23,7 @@ class JobSpec(BaseModel):
     timeout_sec: int = Field(default=60, gt=0, le=600)
     cpu_limit: float = Field(default=1.0, gt=0)
     mem_limit_mb: int = Field(default=512, gt=32)
+    pids_limit: int = Field(default=128, gt=0)
     net_policy: Literal["none", "outbound"] = Field(default="none")
     env: dict[str, str] = Field(default_factory=dict)
 
