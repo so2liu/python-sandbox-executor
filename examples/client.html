@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Job Runner Test Client</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; background: #f6f6f6; color: #222; }
+    h1 { margin-bottom: 8px; }
+    section { background: #fff; padding: 12px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    label { display: block; margin-top: 8px; font-weight: 600; }
+    textarea, input[type="text"] { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 140px; font-family: monospace; }
+    button { margin-top: 8px; padding: 8px 12px; cursor: pointer; }
+    #logs { white-space: pre-wrap; background: #111; color: #0f0; padding: 8px; border-radius: 6px; min-height: 160px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .row > div { flex: 1 1 240px; }
+    ul { padding-left: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Job Runner Test Client</h1>
+  <section>
+    <div class="row">
+      <div>
+        <label for="baseUrl">API base URL</label>
+        <input id="baseUrl" type="text" value="http://localhost:8000" />
+      </div>
+      <div>
+        <label for="jobId">Current job ID</label>
+        <input id="jobId" type="text" readonly placeholder="Submit a job to populate" />
+      </div>
+    </div>
+
+    <form id="jobForm">
+      <label for="spec">Job spec (JSON)</label>
+      <textarea id="spec">{ "entry": "main.py", "timeout_sec": 60, "cpu_limit": 0.5, "mem_limit_mb": 256, "net_policy": "none", "env": {} }</textarea>
+
+      <label for="codeFiles">Code files (at least include entry, multiple allowed)</label>
+      <input id="codeFiles" type="file" name="code_files" multiple />
+
+      <label for="inputFiles">Input files (optional, multiple)</label>
+      <input id="inputFiles" type="file" name="input_files" multiple />
+
+      <button type="submit">Submit job</button>
+    </form>
+    <div id="submitStatus"></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div>
+        <h3>Status</h3>
+        <div id="status">—</div>
+        <button id="refreshStatus">Refresh status</button>
+      </div>
+      <div>
+        <h3>Artifacts</h3>
+        <ul id="artifacts"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h3>Logs (SSE live)</h3>
+    <div id="logs"></div>
+    <button id="reloadLogs">Load full log once</button>
+  </section>
+
+  <script>
+    const form = document.getElementById("jobForm");
+    const baseUrlInput = document.getElementById("baseUrl");
+    const jobIdInput = document.getElementById("jobId");
+    const statusDiv = document.getElementById("status");
+    const artifactsList = document.getElementById("artifacts");
+    const logsDiv = document.getElementById("logs");
+    const submitStatus = document.getElementById("submitStatus");
+    const refreshBtn = document.getElementById("refreshStatus");
+    const reloadLogsBtn = document.getElementById("reloadLogs");
+
+    let pollTimer = null;
+    let eventSource = null;
+
+    function clearStreams() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    }
+
+    async function loadStatus(jobId) {
+      const base = baseUrlInput.value.trim();
+      const resp = await fetch(`${base}/jobs/${jobId}`);
+      if (!resp.ok) throw new Error(`Status HTTP ${resp.status}`);
+      return resp.json();
+    }
+
+    function renderStatus(data) {
+      const job = data.job;
+      statusDiv.textContent = `status=${job.status}, exit=${job.exit_code ?? "?"}, created=${job.created_at}`;
+      renderArtifacts(job.artifacts);
+    }
+
+    function renderArtifacts(items) {
+      artifactsList.innerHTML = "";
+      items.forEach(name => {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = `${baseUrlInput.value.trim()}/jobs/${jobIdInput.value}/artifacts/${encodeURIComponent(name)}`;
+        a.textContent = name;
+        a.target = "_blank";
+        li.appendChild(a);
+        artifactsList.appendChild(li);
+      });
+    }
+
+    function startPolling(jobId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const data = await loadStatus(jobId);
+          renderStatus(data);
+          if (["succeeded", "failed", "canceled"].includes(data.job.status)) {
+            clearInterval(pollTimer);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }, 1000);
+    }
+
+    function startSSE(jobId) {
+      if (eventSource) eventSource.close();
+      logsDiv.textContent = "";
+      const url = `${baseUrlInput.value.trim()}/jobs/${jobId}/logs/stream`;
+      eventSource = new EventSource(url);
+      eventSource.onmessage = (e) => {
+        logsDiv.textContent += e.data + "\n";
+      };
+      eventSource.addEventListener("end", () => {
+        eventSource?.close();
+      });
+      eventSource.onerror = () => {
+        eventSource?.close();
+      };
+    }
+
+    async function loadFullLog(jobId) {
+      const resp = await fetch(`${baseUrlInput.value.trim()}/jobs/${jobId}/logs`);
+      logsDiv.textContent = await resp.text();
+    }
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      clearStreams();
+      submitStatus.textContent = "";
+      const base = baseUrlInput.value.trim();
+      let specText = document.getElementById("spec").value;
+      try {
+        JSON.parse(specText);
+      } catch {
+        alert("Spec is not valid JSON.");
+        return;
+      }
+      const fd = new FormData();
+      fd.append("spec", specText);
+      const codeFiles = document.getElementById("codeFiles").files;
+      const inputFiles = document.getElementById("inputFiles").files;
+      for (const f of codeFiles) fd.append("code_files", f, f.name);
+      for (const f of inputFiles) fd.append("input_files", f, f.name);
+
+      try {
+        const resp = await fetch(`${base}/jobs`, { method: "POST", body: fd });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(JSON.stringify(data));
+        jobIdInput.value = data.job_id;
+        submitStatus.textContent = `Submitted job ${data.job_id}`;
+        startPolling(data.job_id);
+        startSSE(data.job_id);
+        const statusData = await loadStatus(data.job_id);
+        renderStatus(statusData);
+      } catch (err) {
+        submitStatus.textContent = `Error: ${err}`;
+        console.error(err);
+      }
+    });
+
+    refreshBtn.addEventListener("click", async () => {
+      const jobId = jobIdInput.value.trim();
+      if (!jobId) return;
+      try {
+        const data = await loadStatus(jobId);
+        renderStatus(data);
+      } catch (err) {
+        alert(err);
+      }
+    });
+
+    reloadLogsBtn.addEventListener("click", async () => {
+      const jobId = jobIdInput.value.trim();
+      if (!jobId) return;
+      await loadFullLog(jobId);
+    });
+  </script>
+</body>
+</html>
