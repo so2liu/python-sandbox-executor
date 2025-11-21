@@ -1,0 +1,19 @@
+[project]
+name = "job-runner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.121.3",
+    "pandas>=2.3.3",
+    "python-multipart>=0.0.20",
+    "uvicorn[standard]>=0.38.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.1",
+    "ruff>=0.14.6",
+]
