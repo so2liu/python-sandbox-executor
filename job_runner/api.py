@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from job_runner import config
@@ -26,6 +27,7 @@ from job_runner.models import (
 )
 from job_runner.runner import JobRunner
 from job_runner.settings import get_settings
+from job_runner.static_utils import prepare_static_dir
 
 
 settings = get_settings()
@@ -47,6 +49,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Job Runner", version="0.1.0", lifespan=lifespan)
+static_path = prepare_static_dir()
+app.mount("/static", StaticFiles(directory=static_path, html=True), name="static")
 
 
 def _job_paths(job_id: str) -> JobPaths:

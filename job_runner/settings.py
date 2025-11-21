@@ -14,6 +14,7 @@ class Settings:
     use_docker: bool = os.getenv("USE_DOCKER", "1") == "1"
     docker_image: str = os.getenv("JOB_RUN_IMAGE", "job-runner-exec:py3.12")
     docker_bin: str = os.getenv("DOCKER_BIN", "docker")
+    static_dir: str = os.getenv("STATIC_DIR", "static")
 
 
 def get_settings() -> Settings:

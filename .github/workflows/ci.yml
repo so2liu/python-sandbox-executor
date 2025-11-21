@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+      - uses: astral-sh/setup-uv@v3
+      - name: Sync env
+        run: uv sync --dev
+      - name: Lint
+        run: uv run ruff check .
+      - name: Tests
+        env:
+          FAKE_REDIS: "1"
+          INLINE_WORKER: "1"
+          USE_DOCKER: "0"
+        run: uv run pytest
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_BASE: ${{ github.repository_owner }}/job-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: Dockerfile
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}:${{ github.sha }}
+      - name: Build executor image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: Dockerfile.exec
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-exec:py3.12
+            ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}-exec:${{ github.sha }}
