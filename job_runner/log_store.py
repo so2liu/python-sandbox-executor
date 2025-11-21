@@ -1,66 +1,71 @@
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
+from typing import AsyncGenerator
+
+import redis.asyncio as redis
+
+from job_runner.redis_client import get_redis
 
 
 class LogStore:
-    """Stores logs per job in memory + on disk, supports streaming."""
+    """Redis-backed log store with list + pubsub for streaming."""
 
-    def __init__(self) -> None:
-        self._logs: dict[str, list[str]] = {}
-        self._paths: dict[str, Path] = {}
-        self._conditions: dict[str, asyncio.Condition] = {}
-        self._closed: set[str] = set()
-        self._lock = asyncio.Lock()
+    def __init__(self, client: redis.Redis | None = None) -> None:
+        self.redis = client or get_redis()
+        self._complete_key = "log:complete:"
+        self._list_key = "log:list:"
+        self._channel_key = "log:channel:"
 
-    async def register(self, job_id: str, log_path: Path) -> None:
-        async with self._lock:
-            self._logs.setdefault(job_id, [])
-            self._paths[job_id] = log_path
-            self._conditions.setdefault(job_id, asyncio.Condition())
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_path.touch(exist_ok=True)
+    def _list(self, job_id: str) -> str:
+        return f"{self._list_key}{job_id}"
+
+    def _complete(self, job_id: str) -> str:
+        return f"{self._complete_key}{job_id}"
+
+    def _channel(self, job_id: str) -> str:
+        return f"{self._channel_key}{job_id}"
+
+    async def register(self, job_id: str) -> None:
+        await self.redis.delete(self._list(job_id), self._complete(job_id))
 
     async def append(self, job_id: str, text: str) -> None:
-        """Append a log line, persist to disk, and wake streamers."""
-        async with self._lock:
-            self._logs.setdefault(job_id, []).append(text)
-            path = self._paths.get(job_id)
-            if path:
-                with path.open("a", encoding="utf-8") as fh:
-                    fh.write(text)
-            cond = self._conditions.get(job_id)
-        if cond:
-            async with cond:
-                cond.notify_all()
+        await self.redis.rpush(self._list(job_id), text)
+        await self.redis.publish(self._channel(job_id), text)
 
     async def mark_complete(self, job_id: str) -> None:
-        async with self._lock:
-            self._closed.add(job_id)
-            cond = self._conditions.get(job_id)
-        if cond:
-            async with cond:
-                cond.notify_all()
+        await self.redis.set(self._complete(job_id), "1")
+        await self.redis.publish(self._channel(job_id), "__complete__")
 
     async def tail(self, job_id: str) -> list[str]:
-        async with self._lock:
-            return list(self._logs.get(job_id, []))
+        raw = await self.redis.lrange(self._list(job_id), 0, -1)
+        return [self._decode(item) for item in raw]
 
-    async def stream(self, job_id: str, start_at: int = 0):
-        """Async generator yielding logs as they arrive."""
-        cond: asyncio.Condition | None
-        while True:
-            async with self._lock:
-                buffer = self._logs.get(job_id, [])
-                cond = self._conditions.get(job_id)
-                closed = job_id in self._closed
-            while start_at < len(buffer):
-                yield buffer[start_at]
-                start_at += 1
-            if closed:
-                return
-            if cond is None:
-                return
-            async with cond:
-                await cond.wait()
+    async def stream(self, job_id: str, start_at: int = 0) -> AsyncGenerator[str, None]:
+        # yield backlog
+        buffer = await self.redis.lrange(self._list(job_id), start_at, -1)
+        idx = start_at
+        for line in buffer:
+            yield self._decode(line)
+            idx += 1
+
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(self._channel(job_id))
+
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                data = self._decode(message["data"])
+                if data == "__complete__":
+                    return
+                yield str(data)
+                idx += 1
+        finally:
+            await pubsub.unsubscribe(self._channel(job_id))
+            await pubsub.close()
+
+    @staticmethod
+    def _decode(value: str | bytes) -> str:
+        if isinstance(value, bytes):
+            return value.decode()
+        return str(value)

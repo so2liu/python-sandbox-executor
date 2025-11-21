@@ -12,7 +12,9 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import ValidationError
 
 from job_runner import config
+from job_runner.job_store import JobStore
 from job_runner.log_store import LogStore
+from job_runner.memory_store import InMemoryJobStore, InMemoryLogStore
 from job_runner.models import (
     JobCreateResponse,
     JobPaths,
@@ -23,17 +25,24 @@ from job_runner.models import (
     JobView,
 )
 from job_runner.runner import JobRunner
-from job_runner.storage import JobStore
+from job_runner.settings import get_settings
 
 
-job_store = JobStore()
-log_store = LogStore()
-runner = JobRunner(job_store, log_store)
+settings = get_settings()
+if settings.use_fake_redis:
+    job_store = InMemoryJobStore()
+    log_store = InMemoryLogStore()
+    runner = JobRunner(job_store, log_store, redis_client=None)
+else:
+    job_store = JobStore()
+    log_store = LogStore()
+    runner = JobRunner(job_store, log_store)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await runner.start()
+    if settings.inline_worker:
+        await runner.start()
     yield
 
 
@@ -90,7 +99,7 @@ async def create_job(
 
     job_id = uuid4().hex
     paths = _job_paths(job_id)
-    await log_store.register(job_id, paths.log_file)
+    await log_store.register(job_id)
     code_files = code_files or []
     input_files = input_files or []
     await _save_files(paths.code, code_files)

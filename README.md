@@ -1,6 +1,6 @@
 # Job Runner (FastAPI + SSE)
 
-Python 3.12 job runner that accepts user code/files, executes them in a background worker, streams stdout/stderr via Server-Sent Events (SSE), and exposes a one-shot full-log endpoint. Uses `uv` for dependency management and Pydantic for all schemas.
+Python 3.12 job runner that accepts user code/files, executes them in a background worker, streams stdout/stderr via Server-Sent Events (SSE), and exposes a one-shot full-log endpoint. Uses `uv` for dependency management, Redis for queue/state/logs, and Pydantic for all schemas.
 
 ## Run
 
@@ -11,6 +11,8 @@ uv run main.py        # starts FastAPI on :8000
 
 Environment:
 - `JOB_DATA_DIR` (optional) – where job folders are created (`data/jobs` by default).
+- `REDIS_URL` – Redis connection string (default `redis://localhost:6379/0`).
+- `INLINE_WORKER` – run the worker inside the API process (default `1` for dev/tests). Set to `0` when running a separate worker.
 
 ## API (SSE only, no WebSocket)
 - `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads.
@@ -43,9 +45,28 @@ Tail logs (SSE):
 curl -N http://localhost:8000/jobs/<jobId>/logs/stream
 ```
 
+## Worker (separate process)
+
+If you disable `INLINE_WORKER`, run the worker separately:
+```bash
+uv run python worker.py
+```
+
+## Docker / Compose
+
+Build:
+```bash
+docker build -t job-runner:latest .
+```
+
+Compose (Redis + API + worker + optional MinIO):
+```bash
+docker-compose up --build
+```
+API will listen on `localhost:8000`, Redis on `6379`. Data is persisted under `./data`.
+
 ## Tests
 
 ```bash
 uv run pytest
 ```
-

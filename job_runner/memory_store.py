@@ -7,9 +7,7 @@ from typing import Iterable
 from job_runner.models import JobPaths, JobRecord, JobSpec, JobStatus
 
 
-class JobStore:
-    """In-memory job metadata store."""
-
+class InMemoryJobStore:
     def __init__(self) -> None:
         self._jobs: dict[str, JobRecord] = {}
         self._lock = asyncio.Lock()
@@ -19,16 +17,12 @@ class JobStore:
             id=job_id,
             spec=spec,
             status=JobStatus.queued,
-            created_at=datetime.now(timezone.utc),
+            created_at=self._now(),
             paths=paths,
         )
         async with self._lock:
             self._jobs[job_id] = record
         return record
-
-    async def all(self) -> list[JobRecord]:
-        async with self._lock:
-            return list(self._jobs.values())
 
     async def get(self, job_id: str) -> JobRecord:
         async with self._lock:
@@ -77,3 +71,52 @@ class JobStore:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
+
+
+class InMemoryLogStore:
+    def __init__(self) -> None:
+        self._logs: dict[str, list[str]] = {}
+        self._conditions: dict[str, asyncio.Condition] = {}
+        self._closed: set[str] = set()
+        self._lock = asyncio.Lock()
+
+    async def register(self, job_id: str) -> None:
+        async with self._lock:
+            self._logs.setdefault(job_id, [])
+            self._conditions.setdefault(job_id, asyncio.Condition())
+
+    async def append(self, job_id: str, text: str) -> None:
+        async with self._lock:
+            self._logs.setdefault(job_id, []).append(text)
+            cond = self._conditions.get(job_id)
+        if cond:
+            async with cond:
+                cond.notify_all()
+
+    async def mark_complete(self, job_id: str) -> None:
+        async with self._lock:
+            self._closed.add(job_id)
+            cond = self._conditions.get(job_id)
+        if cond:
+            async with cond:
+                cond.notify_all()
+
+    async def tail(self, job_id: str) -> list[str]:
+        async with self._lock:
+            return list(self._logs.get(job_id, []))
+
+    async def stream(self, job_id: str, start_at: int = 0):
+        while True:
+            async with self._lock:
+                buffer = self._logs.get(job_id, [])
+                cond = self._conditions.get(job_id)
+                closed = job_id in self._closed
+            while start_at < len(buffer):
+                yield buffer[start_at]
+                start_at += 1
+            if closed:
+                return
+            if cond is None:
+                return
+            async with cond:
+                await cond.wait()

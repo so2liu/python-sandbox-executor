@@ -5,37 +5,75 @@ import os
 import sys
 from pathlib import Path
 
+import redis.asyncio as redis
+
+from job_runner.job_store import JobStore
 from job_runner.log_store import LogStore
 from job_runner.models import JobStatus
-from job_runner.storage import JobStore
+from job_runner.redis_client import get_redis
+from job_runner.settings import get_settings
 
 
 class JobRunner:
-    """Async worker that executes jobs sequentially."""
+    """Worker that consumes job ids from Redis and executes them."""
 
-    def __init__(self, job_store: JobStore, log_store: LogStore) -> None:
+    def __init__(
+        self,
+        job_store: JobStore,
+        log_store: LogStore,
+        redis_client: redis.Redis | None = None,
+    ) -> None:
         self.job_store = job_store
         self.log_store = log_store
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self.settings = get_settings()
+        self.redis = redis_client
+        if self.redis is None and not self.settings.inline_worker:
+            self.redis = get_redis()
         self._worker_task: asyncio.Task | None = None
+        self._inline_queue: asyncio.Queue[str] | None = (
+            asyncio.Queue() if self.settings.inline_worker else None
+        )
         self.python_bin = sys.executable
 
     async def start(self) -> None:
         if self._worker_task is None:
-            self._worker_task = asyncio.create_task(self._worker_loop())
+            if self.settings.inline_worker:
+                self._worker_task = asyncio.create_task(self._inline_loop())
+            else:
+                self._worker_task = asyncio.create_task(self.run_forever())
 
     async def enqueue(self, job_id: str) -> None:
-        await self._queue.put(job_id)
+        if not self.settings.inline_worker:
+            assert self.redis is not None
+            await self.redis.rpush(self.settings.queue_key, job_id)
+        if self._inline_queue is not None:
+            await self._inline_queue.put(job_id)
 
-    async def _worker_loop(self) -> None:
+    async def run_forever(self) -> None:
+        assert self.redis is not None
         while True:
-            job_id = await self._queue.get()
-            try:
-                await self._run_job(job_id)
-            except Exception as exc:  # pragma: no cover - safety net
-                await self.log_store.append(job_id, f"Runner crashed: {exc}\n")
-            finally:
-                self._queue.task_done()
+            result = await self.redis.blpop(self.settings.queue_key, timeout=0)
+            if not result:
+                continue
+            _, job_id = result
+            if isinstance(job_id, bytes):
+                job_id = job_id.decode()
+            await self._safe_run(job_id)
+
+    async def _safe_run(self, job_id: str) -> None:
+        try:
+            await self._run_job(job_id)
+        except Exception as exc:  # pragma: no cover - safety net
+            await self.log_store.append(job_id, f"Runner crashed: {exc}\n")
+            await self.log_store.mark_complete(job_id)
+
+    async def _inline_loop(self) -> None:
+        if self._inline_queue is None:
+            return
+        while True:
+            job_id = await self._inline_queue.get()
+            await self._safe_run(job_id)
+            self._inline_queue.task_done()
 
     async def _run_job(self, job_id: str) -> None:
         record = await self.job_store.get(job_id)
