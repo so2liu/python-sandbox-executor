@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
-      - uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v3
       - name: Sync env
         run: uv sync --dev
       - name: Lint
@@ -34,7 +34,7 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_BASE: ${{ github.repository_owner }}/job-runner
+      IMAGE_BASE: ${{ github.repository_owner }}/python-sandbox-executor
     steps:
       - uses: actions/checkout@v4
       - name: Login to GHCR

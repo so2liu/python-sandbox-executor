@@ -77,21 +77,21 @@ The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_
 ## CI / Publish (GitHub Actions)
 - Workflow `.github/workflows/ci.yml`:
   - Runs `ruff check` and `pytest` (with fake Redis and inline worker).
-  - Builds and pushes images to GHCR on `main` (`ghcr.io/<owner>/job-runner:latest` and `...-exec:py3.12`).
+  - Builds and pushes images to GHCR on `main` (`ghcr.io/<owner>/python-sandbox-executor:latest` and `...-exec:py3.12`).
 
 To test a published image locally (replace `<owner>`):
 ```bash
-docker pull ghcr.io/<owner>/job-runner:latest
-docker pull ghcr.io/<owner>/job-runner-exec:py3.12
+docker pull ghcr.io/<owner>/python-sandbox-executor:latest
+docker pull ghcr.io/<owner>/python-sandbox-executor-exec:py3.12
 docker run -d --name jr-redis -p 6379:6379 redis:7-alpine
 docker run -d --name jr-worker --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/job-runner-exec:py3.12 \
+  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/python-sandbox-executor-exec:py3.12 \
   -e JOB_DATA_DIR=/data/jobs -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/<owner>/job-runner:latest uv run python worker.py
+  ghcr.io/<owner>/python-sandbox-executor:latest uv run python worker.py
 docker run -d --name jr-api --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/job-runner-exec:py3.12 \
+  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/python-sandbox-executor-exec:py3.12 \
   -e JOB_DATA_DIR=/data/jobs -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/<owner>/job-runner:latest
+  ghcr.io/<owner>/python-sandbox-executor:latest
 ```
 
 Then visit `http://localhost:8000/static/examples/client.html` to submit a job end-to-end.
