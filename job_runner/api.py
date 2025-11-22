@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Annotated
@@ -23,6 +24,7 @@ from job_runner.models import (
     JobSpec,
     JobStatus,
     JobStatusResponse,
+    JobSyncResponse,
     JobView,
 )
 from job_runner.runner import JobRunner
@@ -112,6 +114,60 @@ async def create_job(
     await job_store.create(job_id, job_spec, paths)
     await runner.enqueue(job_id)
     return JobCreateResponse(job_id=job_id, status=JobStatus.queued)
+
+
+@app.post("/jobs/sync", response_model=JobSyncResponse)
+async def create_job_sync(
+    spec: Annotated[str, Form(...)],
+    code_files: Annotated[list[UploadFile] | None, File()] = None,
+    input_files: Annotated[list[UploadFile] | None, File()] = None,
+) -> JobSyncResponse:
+    try:
+        job_spec = JobSpec.model_validate_json(spec)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"spec is not valid JSON: {exc}"
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    job_id = uuid4().hex
+    paths = _job_paths(job_id)
+    await log_store.register(job_id)
+    code_files = code_files or []
+    input_files = input_files or []
+    await _save_files(paths.code, code_files)
+    await _save_files(paths.input, input_files)
+
+    await job_store.create(job_id, job_spec, paths)
+    await runner.enqueue(job_id)
+
+    deadline = asyncio.get_event_loop().time() + job_spec.timeout_sec + 5
+    record_view: JobView | None = None
+    while True:
+        try:
+            rec_full = await job_store.get(job_id)
+            record_view = _to_view(rec_full)
+            if record_view.status in {
+                JobStatus.succeeded,
+                JobStatus.failed,
+                JobStatus.canceled,
+            }:
+                break
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found")
+        if asyncio.get_event_loop().time() > deadline:
+            raise HTTPException(
+                status_code=504, detail="job did not finish before timeout"
+            )
+        await asyncio.sleep(0.1)
+
+    lines = await log_store.tail(job_id)
+    return JobSyncResponse(
+        job=record_view,
+        logs="".join(lines),
+        artifacts=record_view.artifacts if record_view else [],
+    )
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

@@ -75,3 +75,9 @@ class JobCreateResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     job: JobView
     log_lines: int
+
+
+class JobSyncResponse(BaseModel):
+    job: JobView
+    logs: str
+    artifacts: list[str]
