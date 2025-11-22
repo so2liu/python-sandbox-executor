@@ -7,14 +7,14 @@ services:
       - "6379:6379"
 
   api:
-    build: .
+    image: ${API_IMAGE:-ghcr.io/so2liu/python-sandbox-executor:latest}
     command: ["uv", "run", "uvicorn", "job_runner.api:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       REDIS_URL: redis://redis:6379/0
       JOB_DATA_DIR: /data/jobs
       INLINE_WORKER: "0"
       USE_DOCKER: "1"
-      JOB_RUN_IMAGE: job-runner-exec:py3.12
+      JOB_RUN_IMAGE: ${EXEC_IMAGE:-ghcr.io/so2liu/python-sandbox-executor-exec:py3.12}
     volumes:
       - ./data/jobs:/data/jobs
     ports:
@@ -23,14 +23,14 @@ services:
       - redis
 
   worker:
-    build: .
+    image: ${API_IMAGE:-ghcr.io/so2liu/python-sandbox-executor:latest}
     command: ["uv", "run", "python", "worker.py"]
     environment:
       REDIS_URL: redis://redis:6379/0
       JOB_DATA_DIR: /data/jobs
       INLINE_WORKER: "0"
       USE_DOCKER: "1"
-      JOB_RUN_IMAGE: job-runner-exec:py3.12
+      JOB_RUN_IMAGE: ${EXEC_IMAGE:-ghcr.io/so2liu/python-sandbox-executor-exec:py3.12}
     volumes:
       - ./data/jobs:/data/jobs
       - /var/run/docker.sock:/var/run/docker.sock

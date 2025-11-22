@@ -65,7 +65,9 @@ docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.exec -t job
 
 Compose (Redis + API + worker + optional MinIO):
 ```bash
-docker-compose up --build
+API_IMAGE=ghcr.io/so2liu/python-sandbox-executor:latest \
+EXEC_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
+docker compose up
 ```
 API will listen on `localhost:8000`, Redis on `6379`. Data is persisted under `./data`.
 The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_IMAGE`.
