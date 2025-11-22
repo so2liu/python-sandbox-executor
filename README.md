@@ -15,6 +15,7 @@ Environment:
 - `INLINE_WORKER` – run the worker inside the API process (default `1` for dev/tests). Set to `0` when running a separate worker.
 - `USE_DOCKER` – run user code inside a sandboxed container (default `1`). Set to `0` for local/dev where Docker is unavailable.
 - `JOB_RUN_IMAGE` – the sandbox image for jobs (default `job-runner-exec:py3.12`).
+- Executor image includes pandas + matplotlib and Noto CJK fonts for Chinese rendering. `MPLCONFIGDIR` defaults to `/tmp/matplotlib` for writable config/cache.
 
 ## API (SSE only, no WebSocket)
 - `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads.
@@ -68,6 +69,7 @@ Compose (Redis + API + worker + optional MinIO):
 API_IMAGE=ghcr.io/so2liu/python-sandbox-executor:latest \
 EXEC_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
 docker compose up
+# 多执行器：`docker compose up --scale worker=3`（或更多）即可水平扩展 worker。
 ```
 API will listen on `localhost:8000`, Redis on `6379`. Data is persisted under `./data`.
 The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_IMAGE`.
@@ -95,6 +97,7 @@ docker run -d --name jr-api --net=host -e REDIS_URL=redis://localhost:6379/0 \
   -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/python-sandbox-executor-exec:py3.12 \
   -e JOB_DATA_DIR=/data/jobs -v $(pwd)/data/jobs:/data/jobs \
   ghcr.io/<owner>/python-sandbox-executor:latest
+# 多 worker：`docker run ... --name jr-worker2 ...` 或 compose `--scale worker=3`。
 ```
 
 Then visit `http://localhost:8000/static/examples/client.html` to submit a job end-to-end.

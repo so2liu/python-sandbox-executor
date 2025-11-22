@@ -111,6 +111,7 @@ class JobRunner:
             if self.settings.use_docker and not self.settings.inline_worker
             else str(paths.artifacts),
         )
+        env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
         if self.settings.use_docker and not self.settings.inline_worker:
             cmd = self._docker_cmd(job_id, paths, spec, env)
             cwd = None
