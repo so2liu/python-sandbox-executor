@@ -45,7 +45,7 @@ else:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if settings.inline_worker:
+    if runner.settings.inline_worker:
         await runner.start()
     yield
 

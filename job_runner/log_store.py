@@ -29,20 +29,20 @@ class LogStore:
         await self.redis.delete(self._list(job_id), self._complete(job_id))
 
     async def append(self, job_id: str, text: str) -> None:
-        await self.redis.rpush(self._list(job_id), text)
-        await self.redis.publish(self._channel(job_id), text)
+        await self.redis.rpush(self._list(job_id), text)  # type: ignore[misc]
+        await self.redis.publish(self._channel(job_id), text)  # type: ignore[misc]
 
     async def mark_complete(self, job_id: str) -> None:
         await self.redis.set(self._complete(job_id), "1")
         await self.redis.publish(self._channel(job_id), "__complete__")
 
     async def tail(self, job_id: str) -> list[str]:
-        raw = await self.redis.lrange(self._list(job_id), 0, -1)
+        raw = await self.redis.lrange(self._list(job_id), 0, -1)  # type: ignore[misc]
         return [self._decode(item) for item in raw]
 
     async def stream(self, job_id: str, start_at: int = 0) -> AsyncGenerator[str, None]:
         # yield backlog
-        buffer = await self.redis.lrange(self._list(job_id), start_at, -1)
+        buffer = await self.redis.lrange(self._list(job_id), start_at, -1)  # type: ignore[misc]
         idx = start_at
         for line in buffer:
             yield self._decode(line)

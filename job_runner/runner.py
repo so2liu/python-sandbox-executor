@@ -7,9 +7,8 @@ from pathlib import Path
 
 import redis.asyncio as redis
 
-from job_runner.job_store import JobStore
-from job_runner.log_store import LogStore
 from job_runner.models import JobStatus
+from job_runner.protocols import JobStoreProtocol, LogStoreProtocol
 from job_runner.redis_client import get_redis
 from job_runner.settings import get_settings
 
@@ -19,8 +18,8 @@ class JobRunner:
 
     def __init__(
         self,
-        job_store: JobStore,
-        log_store: LogStore,
+        job_store: JobStoreProtocol,
+        log_store: LogStoreProtocol,
         redis_client: redis.Redis | None = None,
     ) -> None:
         self.job_store = job_store
@@ -45,14 +44,14 @@ class JobRunner:
     async def enqueue(self, job_id: str) -> None:
         if not self.settings.inline_worker:
             assert self.redis is not None
-            await self.redis.rpush(self.settings.queue_key, job_id)
+            await self.redis.rpush(self.settings.queue_key, job_id)  # type: ignore[misc]
         if self._inline_queue is not None:
             await self._inline_queue.put(job_id)
 
     async def run_forever(self) -> None:
         assert self.redis is not None
         while True:
-            result = await self.redis.blpop(self.settings.queue_key, timeout=0)
+            result = await self.redis.blpop([self.settings.queue_key], timeout=0)  # type: ignore[misc]
             if not result:
                 continue
             _, job_id = result

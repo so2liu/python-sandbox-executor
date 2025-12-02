@@ -18,23 +18,29 @@ Environment:
 - Executor image includes pandas + matplotlib and Noto CJK fonts for Chinese rendering. `MPLCONFIGDIR` defaults to `/tmp/matplotlib` for writable config/cache.
 
 ## API (SSE only, no WebSocket)
-- `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads.
+- `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads. Returns immediately with job_id.
+- `POST /jobs/sync` (multipart): same format as `/jobs`, but waits for job completion and returns full result with logs and artifacts list.
 - `GET /jobs/{id}`: job status + metadata.
 - `GET /jobs/{id}/logs`: full log snapshot (plain text).
 - `GET /jobs/{id}/logs/stream`: SSE stream of stdout/stderr (`data:` lines, ends with `event: end`).
 - `GET /jobs/{id}/artifacts/{filename}`: download produced file.
 
-`JobSpec` JSON example:
+`JobSpec` JSON example (all fields shown, most are optional):
 ```json
 {
   "entry": "main.py",
   "args": ["--foo", "bar"],
   "timeout_sec": 60,
   "runtime": "python3.12",
+  "cpu_limit": 1.0,
+  "mem_limit_mb": 512,
+  "pids_limit": 128,
   "net_policy": "none",
   "env": {"EXAMPLE": "1"}
 }
 ```
+
+Default resource limits: 1 CPU core, 512MB RAM, 128 processes, no network access.
 
 Example create request:
 ```bash
@@ -84,19 +90,19 @@ The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_
   - Builds and pushes images to GHCR on `main` (`ghcr.io/<owner>/python-sandbox-executor:latest` and `...-exec:py3.12`).
   - Multi-arch (amd64, arm64) via buildx + QEMU.
 
-To test a published image locally (replace `<owner>`):
+To test a published image locally:
 ```bash
-docker pull ghcr.io/<owner>/python-sandbox-executor:latest
-docker pull ghcr.io/<owner>/python-sandbox-executor-exec:py3.12
+docker pull ghcr.io/so2liu/python-sandbox-executor:latest
+docker pull ghcr.io/so2liu/python-sandbox-executor-exec:py3.12
 docker run -d --name jr-redis -p 6379:6379 redis:7-alpine
 docker run -d --name jr-worker --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/python-sandbox-executor-exec:py3.12 \
+  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
   -e JOB_DATA_DIR=/data/jobs -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/<owner>/python-sandbox-executor:latest uv run python worker.py
+  ghcr.io/so2liu/python-sandbox-executor:latest uv run python worker.py
 docker run -d --name jr-api --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/<owner>/python-sandbox-executor-exec:py3.12 \
+  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
   -e JOB_DATA_DIR=/data/jobs -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/<owner>/python-sandbox-executor:latest
+  ghcr.io/so2liu/python-sandbox-executor:latest
 # 多 worker：`docker run ... --name jr-worker2 ...` 或 compose `--scale worker=3`。
 ```
 

@@ -1,0 +1,62 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API Server",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["job_runner.api:app", "--host", "0.0.0.0", "--port", "8765"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "INLINE_WORKER": "1",
+        "USE_DOCKER": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Start Redis"
+    },
+    {
+      "name": "API Server (No Docker)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["job_runner.api:app", "--host", "0.0.0.0", "--port", "8765"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "INLINE_WORKER": "1",
+        "USE_DOCKER": "0"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Start Redis"
+    },
+    {
+      "name": "Worker",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/worker.py",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "INLINE_WORKER": "0",
+        "USE_DOCKER": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Start Redis"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "API + Worker (Separate)",
+      "configurations": ["API Server", "Worker"],
+      "stopAll": true
+    }
+  ]
+}
