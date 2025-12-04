@@ -31,9 +31,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Configure Chinese font (Noto Sans CJK SC is available in Docker)
+# Configure Chinese font (Noto Sans CJK SC is pre-configured in Docker)
 import matplotlib
-matplotlib.rcParams['font.family'] = ['Noto Sans CJK SC', 'Arial Unicode MS', 'PingFang SC', 'SimHei', 'DejaVu Sans']
+matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'DejaVu Sans']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 # Create sample data
