@@ -1,73 +1,51 @@
-# Python Sandbox Executor
+# Python Code Runner
 
-FastAPI-based job runner for executing Python code in isolated Docker containers.
+简单的 Python 代码执行服务器，接收代码和文件，在独立进程中执行，返回结果。
 
-## Tech Stack
+## 技术栈
 
-- Python 3.12 + uv (package manager)
+- Python 3.12 + uv (包管理)
 - FastAPI + Uvicorn
-- Redis (queue, job metadata, logs, pub/sub)
-- Docker (job sandboxing)
 
-## Commands
+## 命令
 
 ```bash
-# Development
-uv sync               # Install dependencies
-uv run main.py        # Start API server on :8000
-uv run python worker.py  # Run worker separately (when INLINE_WORKER=0)
+# 开发
+uv sync               # 安装依赖
+uv run main.py        # 启动服务器 (端口 8765)
 
-# Testing
-uv run pytest         # Run tests (uses FAKE_REDIS=1, USE_DOCKER=0)
+# 测试
+uv run pytest         # 运行测试
 
-# Linting
-uv run ruff check .   # Check code style
+# 检查
+uv run ruff check .   # 代码检查
 
-# Docker build
-docker buildx build --platform linux/amd64,linux/arm64 -t job-runner:latest .
-docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.exec -t job-runner-exec:py3.12 .
-
-# Docker Compose
-API_IMAGE=ghcr.io/so2liu/python-sandbox-executor:latest \
-EXEC_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
-docker compose up
+# Docker
+docker build -t python-code-runner .
+docker run -p 8765:8765 python-code-runner
 ```
 
-## Environment Variables
+## 环境变量
 
-- `REDIS_URL` - Redis connection (default: `redis://localhost:6379/0`)
-- `FAKE_REDIS` - Use fakeredis for testing (default: `0`)
-- `JOB_DATA_DIR` - Job data directory (default: `data/jobs`)
-- `INLINE_WORKER` - Run worker in API process (default: `1` for dev)
-- `USE_DOCKER` - Enable Docker sandboxing (default: `1`)
-- `JOB_RUN_IMAGE` - Executor image (default: `job-runner-exec:py3.12`)
+- `PORT` - 服务端口 (默认: `8765`)
+- `JOB_DATA_DIR` - 作业数据目录 (默认: `data/jobs`)
 
-## Project Structure
+## 项目结构
 
 ```
 job_runner/
-  api.py        # FastAPI endpoints
-  models.py     # Pydantic schemas (JobSpec, JobRecord)
-  runner.py     # Docker job execution
-  job_store.py  # Redis job metadata storage
-  log_store.py  # Redis log streaming (list + pub/sub)
-  settings.py   # Environment config
-worker.py       # Standalone worker process
+  api.py          # FastAPI 端点
+  runner.py       # 代码执行器 (subprocess)
+  models.py       # 数据模型 (JobSpec, JobPaths, JobResult)
+  config.py       # 配置
+  settings.py     # 环境变量
+static/
+  index.html      # 测试页面
 ```
 
-## API Endpoints
+## API 端点
 
-- `POST /jobs` - Submit job (async, returns job_id)
-- `POST /jobs/sync` - Submit job (sync, waits for completion)
-- `GET /jobs/{id}` - Job status
-- `GET /jobs/{id}/logs` - Full log (plain text)
-- `GET /jobs/{id}/logs/stream` - SSE log stream
-- `GET /jobs/{id}/artifacts/{filename}` - Download artifact
-
-## Security Model
-
-Jobs run in Docker with:
-- Read-only root filesystem + tmpfs /tmp
-- `--cap-drop=ALL`, `--security-opt no-new-privileges`
-- CPU, memory, PID limits
-- Network isolation (`none` or `outbound` only)
+- `GET /` - 测试页面
+- `GET /health` - 健康检查
+- `POST /run` - 执行代码 (同步，返回结果)
+- `GET /jobs/{id}/artifacts/{filename}` - 下载产物

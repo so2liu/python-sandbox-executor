@@ -1,24 +1,18 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
 
-ARG DOCKER_CLI_VERSION=27.3.1
-ARG TARGETARCH
-
+# Install CJK fonts for matplotlib
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates build-essential tar && rm -rf /var/lib/apt/lists/*
-RUN ARCH=$(if [ "${TARGETARCH}" = "amd64" ]; then echo x86_64; elif [ "${TARGETARCH}" = "arm64" ]; then echo aarch64; else echo "${TARGETARCH}"; fi) && \
-    curl -fsSL https://download.docker.com/linux/static/stable/${ARCH}/docker-${DOCKER_CLI_VERSION}.tgz \
-    | tar xz -C /usr/local/bin --strip-components=1 docker/docker
-RUN pip install --no-cache-dir uv
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -fv
 
 COPY pyproject.toml uv.lock ./
-RUN UV_NO_CACHE=1 uv sync --frozen --no-dev
+RUN pip install uv && uv sync --no-dev
 
 COPY . .
-ENV JOB_DATA_DIR=/data/jobs
-EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "job_runner.api:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8765
+
+CMD ["uv", "run", "main.py"]

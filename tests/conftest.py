@@ -1,11 +1,15 @@
-import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("FAKE_REDIS", "1")
-os.environ.setdefault("INLINE_WORKER", "1")
-os.environ.setdefault("USE_DOCKER", "0")
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+@pytest.fixture
+def tmp_job_dir(tmp_path, monkeypatch):
+    """Set up temporary job data directory."""
+    monkeypatch.setenv("JOB_DATA_DIR", str(tmp_path / "jobs"))
+    return tmp_path / "jobs"

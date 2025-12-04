@@ -1,57 +1,148 @@
 import json
-import time
 
 from fastapi.testclient import TestClient
 
 from job_runner.api import app
 
 
-def test_job_execution_flow(tmp_path, monkeypatch):
-    monkeypatch.setenv("JOB_DATA_DIR", str(tmp_path / "jobs"))
-
+def test_health():
     client = TestClient(app)
-    with client:
-        spec = {
-            "entry": "main.py",
-            "timeout_sec": 10,
-        }
-        code = """
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_index():
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "Python Code Runner" in resp.text
+
+
+def test_run_simple_code(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "main.py", "timeout_sec": 10}
+    code = 'print("hello world")'
+    files = [("code_files", ("main.py", code.encode(), "text/x-python"))]
+
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["status"] == "succeeded"
+    assert data["exit_code"] == 0
+    assert "hello world" in data["logs"]
+
+
+def test_run_with_artifacts(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "main.py", "timeout_sec": 10}
+    code = """
 import os
-import pandas as pd
-
-print("hello from job")
-df = pd.DataFrame({"x": [1, 2, 3]})
 out_dir = os.environ["JOB_OUTPUT_DIR"]
-df.to_csv(os.path.join(out_dir, "result.csv"), index=False)
-print("rows", len(df))
+with open(os.path.join(out_dir, "result.txt"), "w") as f:
+    f.write("output data")
+print("done")
 """
-        files = [
-            ("code_files", ("main.py", code.encode(), "text/x-python")),
-        ]
-        resp = client.post("/jobs", data={"spec": json.dumps(spec)}, files=files)
-        assert resp.status_code == 200, resp.text
-        job_id = resp.json()["job_id"]
+    files = [("code_files", ("main.py", code.encode(), "text/x-python"))]
 
-        status = ""
-        for _ in range(200):
-            detail = client.get(f"/jobs/{job_id}").json()
-            status = detail["job"]["status"]
-            if status in {"succeeded", "failed"}:
-                break
-            time.sleep(0.05)
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
 
-        assert status == "succeeded"
+    data = resp.json()
+    assert data["status"] == "succeeded"
+    assert "result.txt" in data["artifacts"]
+    assert "done" in data["logs"]
 
-        log_resp = client.get(f"/jobs/{job_id}/logs")
-        assert "hello from job" in log_resp.text
-        assert "rows 3" in log_resp.text
+    art_resp = client.get(f"/jobs/{data['job_id']}/artifacts/result.txt")
+    assert art_resp.status_code == 200
+    assert art_resp.text == "output data"
 
-        sse_resp = client.get(f"/jobs/{job_id}/logs/stream")
-        assert "data: hello from job" in sse_resp.text
-        assert "event: end" in sse_resp.text
 
-        art_resp = client.get(f"/jobs/{job_id}/artifacts/result.csv")
-        assert art_resp.status_code == 200
-        content = art_resp.text.strip().splitlines()
-        assert content[0] == "x"
-        assert content[1:] == ["1", "2", "3"]
+def test_run_with_input_files(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "main.py", "timeout_sec": 10}
+    code = """
+import os
+input_dir = os.environ["JOB_INPUT_DIR"]
+with open(os.path.join(input_dir, "data.txt")) as f:
+    content = f.read()
+print(f"read: {content}")
+"""
+    files = [
+        ("code_files", ("main.py", code.encode(), "text/x-python")),
+        ("input_files", ("data.txt", b"test input", "text/plain")),
+    ]
+
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["status"] == "succeeded"
+    assert "read: test input" in data["logs"]
+
+
+def test_run_timeout(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "main.py", "timeout_sec": 1}
+    code = """
+import time
+print("starting")
+time.sleep(10)
+print("done")
+"""
+    files = [("code_files", ("main.py", code.encode(), "text/x-python"))]
+
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["status"] == "failed"
+    assert data["error"] == "timeout"
+    assert "timeout exceeded" in data["logs"]
+
+
+def test_run_error(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "main.py", "timeout_sec": 10}
+    code = """
+print("before error")
+raise ValueError("test error")
+"""
+    files = [("code_files", ("main.py", code.encode(), "text/x-python"))]
+
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["status"] == "failed"
+    assert data["exit_code"] != 0
+    assert "before error" in data["logs"]
+
+
+def test_run_missing_entry(tmp_job_dir):
+    client = TestClient(app)
+    spec = {"entry": "nonexistent.py", "timeout_sec": 10}
+    code = 'print("hello")'
+    files = [("code_files", ("main.py", code.encode(), "text/x-python"))]
+
+    resp = client.post("/run", data={"spec": json.dumps(spec)}, files=files)
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["status"] == "failed"
+    assert data["error"] == "missing entry file"
+
+
+def test_run_invalid_spec(tmp_job_dir):
+    client = TestClient(app)
+    files = [("code_files", ("main.py", b'print("hi")', "text/x-python"))]
+
+    resp = client.post("/run", data={"spec": "not json"}, files=files)
+    assert resp.status_code in (400, 422)  # 400 for invalid JSON, 422 for validation error
+
+
+def test_artifact_not_found(tmp_job_dir):
+    client = TestClient(app)
+    resp = client.get("/jobs/nonexistent/artifacts/file.txt")
+    assert resp.status_code == 404

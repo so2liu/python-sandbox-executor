@@ -1,115 +1,117 @@
-# Job Runner (FastAPI + SSE)
+# Python Code Runner
 
-Python 3.12 job runner that accepts user code/files, executes them in an isolated worker container, streams stdout/stderr via Server-Sent Events (SSE), and exposes a one-shot full-log endpoint. Uses `uv` for dependency management, Redis for queue/state/logs, and Pydantic for all schemas.
+简单的 Python 代码执行服务器。接收 Python 代码和文件，在独立进程中执行，返回结果和产物。
 
-## Run
+## 快速开始
 
 ```bash
-uv sync               # install deps into .venv
-uv run main.py        # starts FastAPI on :8000
+uv sync               # 安装依赖
+uv run main.py        # 启动服务器 (默认端口 8765)
 ```
 
-Environment:
-- `JOB_DATA_DIR` (optional) – where job folders are created (`data/jobs` by default).
-- `REDIS_URL` – Redis connection string (default `redis://localhost:6379/0`).
-- `INLINE_WORKER` – run the worker inside the API process (default `1` for dev/tests). Set to `0` when running a separate worker.
-- `USE_DOCKER` – run user code inside a sandboxed container (default `1`). Set to `0` for local/dev where Docker is unavailable.
-- `JOB_RUN_IMAGE` – the sandbox image for jobs (default `job-runner-exec:py3.12`).
-- Executor image includes pandas + matplotlib and Noto CJK fonts for Chinese rendering. `MPLCONFIGDIR` defaults to `/tmp/matplotlib` for writable config/cache.
+打开浏览器访问 http://localhost:8765 即可使用测试页面。
 
-## API (SSE only, no WebSocket)
-- `POST /jobs` (multipart): field `spec` contains JSON spec (entry, args, timeout, etc.); `code_files` and `input_files` are optional uploads. Returns immediately with job_id.
-- `POST /jobs/sync` (multipart): same format as `/jobs`, but waits for job completion and returns full result with logs and artifacts list.
-- `GET /jobs/{id}`: job status + metadata.
-- `GET /jobs/{id}/logs`: full log snapshot (plain text).
-- `GET /jobs/{id}/logs/stream`: SSE stream of stdout/stderr (`data:` lines, ends with `event: end`).
-- `GET /jobs/{id}/artifacts/{filename}`: download produced file.
+## 环境变量
 
-`JobSpec` JSON example (all fields shown, most are optional):
+- `PORT` - 服务端口 (默认: `8765`)
+- `JOB_DATA_DIR` - 作业数据目录 (默认: `data/jobs`)
+
+## API
+
+### `GET /health`
+健康检查。
+
+```bash
+curl http://localhost:8765/health
+# {"status":"ok"}
+```
+
+### `POST /run`
+执行 Python 代码（同步，等待完成返回结果）。
+
+**参数** (multipart/form-data):
+- `spec` - JSON 格式的作业配置
+- `code_files` - 代码文件（至少包含入口文件）
+- `input_files` - 输入文件（可选）
+
+**JobSpec JSON**:
 ```json
 {
   "entry": "main.py",
-  "args": ["--foo", "bar"],
+  "args": [],
   "timeout_sec": 60,
-  "runtime": "python3.12",
-  "cpu_limit": 1.0,
-  "mem_limit_mb": 512,
-  "pids_limit": 128,
-  "net_policy": "none",
-  "env": {"EXAMPLE": "1"}
+  "env": {}
 }
 ```
 
-Default resource limits: 1 CPU core, 512MB RAM, 128 processes, no network access.
-
-Example create request:
+**示例**:
 ```bash
-curl -X POST http://localhost:8000/jobs \
-  -F spec='{"entry":"main.py","timeout_sec":20}' \
-  -F code_files=@examples/main.py
+curl -X POST http://localhost:8765/run \
+  -F 'spec={"entry":"main.py","timeout_sec":30}' \
+  -F 'code_files=@main.py'
 ```
 
-Tail logs (SSE):
-```bash
-curl -N http://localhost:8000/jobs/<jobId>/logs/stream
+**响应**:
+```json
+{
+  "job_id": "abc123...",
+  "status": "succeeded",
+  "exit_code": 0,
+  "error": null,
+  "logs": "[runner] starting job...\nHello World\n[runner] finished with code 0\n",
+  "artifacts": ["result.xlsx"]
+}
 ```
 
-## Worker (separate process)
+### `GET /jobs/{job_id}/artifacts/{filename}`
+下载作业产物文件。
 
-If you disable `INLINE_WORKER`, run the worker separately:
 ```bash
-uv run python worker.py
+curl -O http://localhost:8765/jobs/abc123/artifacts/result.xlsx
 ```
 
-## Docker / Compose
+## 项目结构
 
-Build (multi-arch enabled in CI; locally you can):
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t job-runner:latest .
-# Build executor image for jobs (contains pandas)
-docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.exec -t job-runner-exec:py3.12 .
+```
+job_runner/
+├── api.py          # FastAPI 端点
+├── runner.py       # 代码执行器
+├── models.py       # 数据模型 (JobSpec, JobPaths, JobResult)
+├── config.py       # 配置
+├── settings.py     # 环境变量
+└── static_utils.py # 静态文件工具
+static/
+└── index.html      # 测试页面
 ```
 
-Compose (Redis + API + worker + optional MinIO):
+## Docker
+
 ```bash
-API_IMAGE=ghcr.io/so2liu/python-sandbox-executor:latest \
-EXEC_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
-docker compose up
-# 多执行器：`docker compose up --scale worker=3`（或更多）即可水平扩展 worker。
-```
-API will listen on `localhost:8000`, Redis on `6379`. Data is persisted under `./data`.
-The worker mounts the Docker socket to launch per-job containers using `JOB_RUN_IMAGE`.
-
-### Offline docs & test page in image
-- Static assets (README, docker-compose.yml, examples/client.html) are copied into the image and served at `/static`.
-- Quick manual test page: open `/static/examples/client.html` when the API is running.
-
-## CI / Publish (GitHub Actions)
-- Workflow `.github/workflows/ci.yml`:
-  - Runs `ruff check` and `pytest` (with fake Redis and inline worker).
-  - Builds and pushes images to GHCR on `main` (`ghcr.io/<owner>/python-sandbox-executor:latest` and `...-exec:py3.12`).
-  - Multi-arch (amd64, arm64) via buildx + QEMU.
-
-To test a published image locally:
-```bash
-docker pull ghcr.io/so2liu/python-sandbox-executor:latest
-docker pull ghcr.io/so2liu/python-sandbox-executor-exec:py3.12
-docker run -d --name jr-redis -p 6379:6379 redis:7-alpine
-docker run -d --name jr-worker --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
-  -e JOB_DATA_DIR=/data/jobs -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/so2liu/python-sandbox-executor:latest uv run python worker.py
-docker run -d --name jr-api --net=host -e REDIS_URL=redis://localhost:6379/0 \
-  -e INLINE_WORKER=0 -e USE_DOCKER=1 -e JOB_RUN_IMAGE=ghcr.io/so2liu/python-sandbox-executor-exec:py3.12 \
-  -e JOB_DATA_DIR=/data/jobs -v $(pwd)/data/jobs:/data/jobs \
-  ghcr.io/so2liu/python-sandbox-executor:latest
-# 多 worker：`docker run ... --name jr-worker2 ...` 或 compose `--scale worker=3`。
+docker build -t python-code-runner .
+docker run -p 8765:8765 python-code-runner
 ```
 
-Then visit `http://localhost:8000/static/examples/client.html` to submit a job end-to-end.
-
-## Tests
+## 测试
 
 ```bash
 uv run pytest
 ```
+
+## 内置库
+
+服务器环境包含以下常用库：
+
+**数据处理**
+- numpy, pandas, openpyxl, xlsxwriter
+
+**可视化** (支持中文)
+- matplotlib, seaborn, plotly
+
+**地理/GIS**
+- geopandas, shapely, pyproj, geopy
+
+**科学计算**
+- scipy, scikit-learn
+
+**其他**
+- requests, httpx, pillow, pyyaml, python-dateutil
