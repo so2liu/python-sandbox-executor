@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml uv.lock ./
 RUN pip install uv && uv sync --no-dev
 
-# Clear matplotlib font cache so it's rebuilt on first run with new fonts
-RUN rm -rf /root/.cache/matplotlib
+# Force matplotlib to rebuild its font cache with all available fonts
+RUN uv run python -c "import matplotlib.font_manager as fm; fm._load_fontmanager(try_read_cache=False)"
 
 COPY . .
 
